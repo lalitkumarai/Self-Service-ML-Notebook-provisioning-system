@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-backend
+  template:
+    metadata:
+      labels:
+        app: ml-backend
+    spec:
+      serviceAccountName: ml-backend-sa
+      containers:
+      - name: ml-backend
+        image: ml-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5000
+        env:
+        - name: MONGO_URI
+          value: "mongodb://mongo:27017/ml-notebooks"
+        - name: JWT_SECRET
+          value: "production_secret_key_change_me"
+        - name: NODE_ENV
+          value: "production"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-backend
+spec:
+  selector:
+    app: ml-backend
+  ports:
+  - port: 5000
+    targetPort: 5000
+  type: NodePort # Or ClusterIP if using Ingress

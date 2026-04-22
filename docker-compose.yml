@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: ml-notebook-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - ml-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ml-backend
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: development
+      MONGO_URI: mongodb://admin:password@mongodb:27017/ml-notebooks?authSource=admin
+      JWT_SECRET: your-secret-key-change-in-production
+      PORT: 5000
+      USE_MEMORY_DB: "false"
+      MOCK_K8S: "true"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - ml-network
+    command: npm run dev
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ml-notebook-frontend
+    ports:
+      - "5173:80"
+    environment:
+      VITE_API_URL: http://localhost:5000
+    depends_on:
+      - backend
+    networks:
+      - ml-network
+
+volumes:
+  mongodb_data:
+
+networks:
+  ml-network:
+    driver: bridge

@@ -1,0 +1,181 @@
+{
+  "id": "69cef86f61d50d0f49688ad4",
+  "cells": [
+    {
+      "id": "cell-1",
+      "type": "code",
+      "content": "import time\nimport random\nimport io\nimport base64\nimport numpy as np\nimport pandas as pd\nfrom sklearn.model_selection import train_test_split\nfrom sklearn.linear_model import LinearRegression\nfrom sklearn.metrics import r2_score\nimport matplotlib.pyplot as plt\n\nprint(\"Libraries imported successfully!\")",
+      "output": [
+        {
+          "type": "stdout",
+          "content": "Libraries imported successfully!\r\n"
+        },
+        {
+          "type": "stderr",
+          "content": ">>> >>> >>> >>> "
+        }
+      ],
+      "status": "completed",
+      "startTime": 1775171711847,
+      "executionTime": 7458
+    },
+    {
+      "id": "cell-2",
+      "type": "code",
+      "content": "# Generate synthetic dataset\nprint(\"Loading dataset...\")\ntime.sleep(1) # Simulate I/O\n\nnp.random.seed(42)\nX = np.random.rand(100, 1) * 10\ny = 2.5 * X + np.random.randn(100, 1) * 2\n\ndf = pd.DataFrame(np.hstack([X, y]), columns=['Feature', 'Target'])\nprint(f\"Dataset loaded: {len(df)} samples\")\nprint(df.head())",
+      "output": [
+        {
+          "type": "stdout",
+          "content": "Loading dataset...\r\n"
+        },
+        {
+          "type": "stderr",
+          "content": ">>> >>> >>> >>> >>> >>> "
+        },
+        {
+          "type": "stdout",
+          "content": "Dataset loaded: 100 samples\r\n"
+        },
+        {
+          "type": "stdout",
+          "content": "    Feature     Target\r\n0  3.745401   9.537597\r\n1  9.507143  23.169843\r\n2  7.319939  18.483370\r\n3  5.986585  10.991324\r\n4  1.560186   3.461122\r\n"
+        },
+        {
+          "type": "stderr",
+          "content": ">>> >>> >>> >>> "
+        }
+      ],
+      "status": "completed",
+      "startTime": 1775171719304,
+      "executionTime": 1038
+    },
+    {
+      "id": "cell-3",
+      "type": "code",
+      "content": "# Data Preprocessing\nprint(\"Preprocessing data...\")\ntime.sleep(0.5)\n\nX_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)\nprint(f\"Training set: {len(X_train)} samples\")\nprint(f\"Test set: {len(X_test)} samples\")",
+      "output": [
+        {
+          "type": "stderr",
+          "content": ">>> >>> "
+        },
+        {
+          "type": "stdout",
+          "content": "Preprocessing data...\r\n"
+        },
+        {
+          "type": "stderr",
+          "content": ">"
+        },
+        {
+          "type": "stderr",
+          "content": ">> >>> "
+        },
+        {
+          "type": "stdout",
+          "content": "Training set: 80 samples\r\n"
+        },
+        {
+          "type": "stderr",
+          "content": ">>> >>> >>> >>> >>> "
+        },
+        {
+          "type": "stdout",
+          "content": "Test set: 20 samples\r\n"
+        }
+      ],
+      "status": "completed",
+      "startTime": 1775171720341,
+      "executionTime": 524
+    },
+    {
+      "id": "cell-4",
+      "type": "code",
+      "content": "# Train Model\nprint(\"Training Linear Regression model...\")\nmodel = LinearRegression()\n\n# Simulate training progress\nfor i in range(5):\n    print(f\"Epoch {i+1}/5 - loss: {random.random():.4f}\")\n    time.sleep(0.5)\n\nmodel.fit(X_train, y_train)\nprint(\"Training completed!\")",
+      "output": [
+        {
+          "type": "stdout",
+          "content": "Training Linear Regression model...\r\n"
+        },
+        {
+          "type": "stderr",
+          "content": ">>> >>> >>> >>> ... ... ... "
+        },
+        {
+          "type": "stdout",
+          "content": "Epoch 1/5 - loss: 0.5370\r\n"
+        },
+        {
+          "type": "stdout",
+          "content": "Epoch 2/5 - loss: 0.6433\r\n"
+        },
+        {
+          "type": "stdout",
+          "content": "Epoch 3/5 - loss: 0.1229\r\n"
+        },
+        {
+          "type": "stdout",
+          "content": "Epoch 4/5 - loss: 0.4991\r\n"
+        },
+        {
+          "type": "stdout",
+          "content": "Epoch 5/5 - loss: 0.5296\r\n"
+        },
+        {
+          "type": "stdout",
+          "content": "LinearRegression()\r\n"
+        },
+        {
+          "type": "stderr",
+          "content": ">>> >>> >>> >>> >>> "
+        },
+        {
+          "type": "stdout",
+          "content": "Training completed!\r\n"
+        }
+      ],
+      "status": "completed",
+      "startTime": 1775171720864,
+      "executionTime": 2532
+    },
+    {
+      "id": "cell-5",
+      "type": "code",
+      "content": "# Evaluate Model\nprint(\"Evaluating model...\")\ny_pred = model.predict(X_test)\nscore = r2_score(y_test, y_pred)\nprint(f\"R² Score: {score:.4f}\")",
+      "output": [
+        {
+          "type": "stdout",
+          "content": "Evaluating model...\r\n"
+        },
+        {
+          "type": "stdout",
+          "content": "R² Score: 0.9546\r\n"
+        },
+        {
+          "type": "stderr",
+          "content": ">>> >>> >>> >>> "
+        }
+      ],
+      "status": "completed",
+      "startTime": 1775171723395,
+      "executionTime": 26
+    },
+    {
+      "id": "cell-6",
+      "type": "code",
+      "content": "# Visualization\nprint(\"Generating visualization...\")\nplt.figure(figsize=(10, 6))\nplt.scatter(X_test, y_test, color='black', label='Actual Data')\nplt.plot(X_test, y_pred, color='blue', linewidth=3, label='Predictions')\nplt.title('Linear Regression Results')\nplt.xlabel('Feature')\nplt.ylabel('Target')\nplt.legend()\nplt.grid(True)\n\n# Save to base64 for display\nbuf = io.BytesIO()\nplt.savefig(buf, format='png')\nbuf.seek(0)\nimg_str = base64.b64encode(buf.read()).decode('utf-8')\nprint(f\"__IMG_START__{img_str}__IMG_END__\")\nplt.close()\nprint(\"Plot generated successfully.\")",
+      "output": [
+        {
+          "type": "stdout",
+          "content": "Generating visualization...\r\n"
+        },
+        {
+          "type": "stdout",
+          "content": "<Figure size 1000x600 with 0 Axes>\r\n"
+        }
+      ],
+      "status": "running",
+      "startTime": 1775171723420
+    }
+  ],
+  "updatedAt": "2026-04-02T23:15:30.082Z"
+}

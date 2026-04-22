@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ml-backend-sa
+  namespace: default
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ml-backend-role
+  namespace: default
+rules:
+  # Core Resources: Services, PVCs, Pods (for logs/monitoring)
+  - apiGroups: [""]
+    resources: ["services", "persistentvolumeclaims", "pods", "pods/log"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Apps Resources: Deployments (Notebook Pods)
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ml-backend-binding
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: ml-backend-sa
+    namespace: default
+roleRef:
+  kind: Role
+  name: ml-backend-role
+  apiGroup: rbac.authorization.k8s.io
+---
+# ClusterRole for reading Node info (System Status API)
+# This is separated to keep the main Role namespace-scoped for security.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ml-backend-node-reader
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ml-backend-node-reader-binding
+subjects:
+  - kind: ServiceAccount
+    name: ml-backend-sa
+    namespace: default
+roleRef:
+  kind: ClusterRole
+  name: ml-backend-node-reader
+  apiGroup: rbac.authorization.k8s.io
