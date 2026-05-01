@@ -5,6 +5,7 @@ const {
     getNotebooks, 
     deleteNotebook, 
     reconnectNotebook,
+    stopNotebook,
     saveNotebookContent,
     getNotebookContent,
     getSystemStatus
@@ -16,6 +17,7 @@ router.get('/list', authenticateToken, getNotebooks);
 router.get('/system-status', authenticateToken, authorizeRole('admin'), getSystemStatus);
 router.delete('/delete/:id', authenticateToken, deleteNotebook);
 router.post('/reconnect/:id', authenticateToken, reconnectNotebook);
+router.post('/stop/:id',      authenticateToken, stopNotebook);
 router.get('/:id/content', authenticateToken, getNotebookContent);
 router.post('/:id/content', authenticateToken, saveNotebookContent);
 

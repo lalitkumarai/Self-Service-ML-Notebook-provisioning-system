@@ -21,6 +21,7 @@ import {
   Loader2,
   XCircle,
   PauseCircle,
+  Square,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 
@@ -86,12 +87,14 @@ const ResourceChip = ({ icon: Icon, value, color, bgColor }) => (
 );
 
 // ─── Action button ────────────────────────────────────────────────────────────
-const ActionBtn = ({ onClick, variant = 'ghost', icon: Icon, label, disabled }) => {
+const ActionBtn = ({ onClick, variant = 'ghost', icon: Icon, label, disabled, loading }) => {
   const styles = {
     primary:
       'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm shadow-indigo-500/25 border-transparent',
     warning:
       'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100 hover:border-amber-300',
+    stop:
+      'bg-orange-50 text-orange-600 border-orange-200 hover:bg-orange-100 hover:border-orange-300',
     danger:
       'bg-red-50 text-red-600 border-red-200 hover:bg-red-100 hover:border-red-300',
     ghost:
@@ -100,15 +103,17 @@ const ActionBtn = ({ onClick, variant = 'ghost', icon: Icon, label, disabled }) 
   return (
     <button
       onClick={onClick}
-      disabled={disabled}
+      disabled={disabled || loading}
       title={label}
       className={clsx(
         'flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all duration-200 disabled:opacity-40 disabled:cursor-not-allowed',
         styles[variant]
       )}
     >
-      <Icon size={13} />
-      <span className="hidden sm:inline">{label}</span>
+      {loading
+        ? <span className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+        : <Icon size={13} />}
+      <span className="hidden sm:inline">{loading ? '...' : label}</span>
     </button>
   );
 };
@@ -168,6 +173,7 @@ const NotebookTable = ({
   isLoading = false,
   onOpen,
   onReconnect,
+  onStop,
   onDelete,
   onCreateNew,
 }) => {
@@ -175,7 +181,14 @@ const NotebookTable = ({
   const [statusFilter, setStatusFilter] = useState('All');
   const [sortField, setSortField] = useState('createdAt');
   const [sortDir, setSortDir] = useState('desc');
-  const [actionMenu, setActionMenu] = useState(null); // id of row with open menu
+  const [actionMenu, setActionMenu] = useState(null);
+  const [stoppingId, setStoppingId] = useState(null);  // track which row is stopping
+
+  const handleStop = async (id) => {
+    setStoppingId(id);
+    await onStop?.(id);
+    setStoppingId(null);
+  };
 
   const statuses = ['All', 'Running', 'Pending', 'Stopped', 'Failed'];
 
@@ -391,13 +404,24 @@ const NotebookTable = ({
                           />
                         )}
 
-                        {/* Reconnect — warning, only when not Running */}
+                        {/* Stop — orange, only when Running */}
+                        {isRunning(nb) && (
+                          <ActionBtn
+                            onClick={() => handleStop(nb._id)}
+                            variant="stop"
+                            icon={Square}
+                            label="Stop"
+                            loading={stoppingId === nb._id}
+                          />
+                        )}
+
+                        {/* Reconnect — warning, only when stopped */}
                         {!isRunning(nb) && nb.status !== 'Failed' && (
                           <ActionBtn
                             onClick={() => onReconnect?.(nb._id)}
                             variant="warning"
                             icon={RotateCcw}
-                            label="Reconnect"
+                            label="Start"
                             disabled={nb.status === 'Pending' || nb.status === 'Creating'}
                           />
                         )}

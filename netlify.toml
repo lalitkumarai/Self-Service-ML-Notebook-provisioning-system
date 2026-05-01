@@ -1,0 +1,37 @@
+# ─── Netlify Build Configuration ─────────────────────────────────────────────
+# Tells Netlify where the frontend lives and how to build it.
+
+[build]
+  # The frontend subfolder is the root for this deployment
+  base    = "frontend"
+  # Vite outputs to 'dist'
+  publish = "dist"
+  # Production build command
+  command = "npm run build"
+
+[build.environment]
+  NODE_VERSION = "18"
+
+# ─── SPA Routing ──────────────────────────────────────────────────────────────
+# React Router v6 handles ALL routing client-side.
+# Without this, refreshing any non-root URL returns Netlify's 404.
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
+
+# ─── Security Headers ─────────────────────────────────────────────────────────
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options           = "SAMEORIGIN"
+    X-Content-Type-Options    = "nosniff"
+    X-XSS-Protection          = "1; mode=block"
+    Referrer-Policy           = "strict-origin-when-cross-origin"
+    Permissions-Policy        = "camera=(), microphone=(), geolocation=()"
+
+# Cache hashed assets forever (Vite adds content hash to filenames)
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

@@ -1,0 +1,73 @@
+# =============================================================================
+# GPU Notebook — PyTorch + CUDA 12.1
+# Image tag: ml-notebook-pytorch:latest
+# =============================================================================
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+LABEL maintainer="ML Platform <devops@mlplatform.io>"
+LABEL description="PyTorch GPU Notebook - CUDA 12.1"
+LABEL framework="pytorch"
+
+# ── System packages ───────────────────────────────────────────────────────────
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.11 python3.11-dev python3-pip python3.11-venv \
+        curl git build-essential ca-certificates \
+    && ln -sf /usr/bin/python3.11 /usr/bin/python3 \
+    && ln -sf /usr/bin/python3     /usr/bin/python \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# ── Create non-root notebook user (mirrors jovyan in jupyter/base-notebook) ──
+RUN useradd -m -s /bin/bash -u 1000 -g 100 jovyan
+ENV HOME=/home/jovyan
+WORKDIR /home/jovyan/work
+
+# ── Python packages ────────────────────────────────────────────────────────────
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+        # Core ML
+        numpy==1.26.4 \
+        pandas==2.2.1 \
+        scikit-learn==1.4.2 \
+        matplotlib==3.8.4 \
+        seaborn==0.13.2 \
+        scipy==1.13.0 \
+        # PyTorch with CUDA 12.1
+        torch==2.3.0 \
+        torchvision==0.18.0 \
+        torchaudio==2.3.0 \
+        # JupyterLab
+        jupyterlab==4.2.1 \
+        ipywidgets==8.1.2 \
+        ipykernel==6.29.4 && \
+    # Smoke test
+    python -c "import torch; print(f'✅ PyTorch {torch.__version__} ready | CUDA available: {torch.cuda.is_available()}')"
+
+# ── Auto-import startup + starter notebook ────────────────────────────────────
+COPY 00_imports.py /home/jovyan/.ipython/profile_default/startup/00_imports.py
+COPY startup.ipynb /home/jovyan/work/00_Getting_Started.ipynb
+
+# Create ipython profile dir + fix permissions as root, then switch back
+USER root
+RUN mkdir -p /home/jovyan/.ipython/profile_default/startup \
+    && chown -R jovyan:100 /home/jovyan/.ipython \
+    && chown jovyan:100 /home/jovyan/work/00_Getting_Started.ipynb
+USER jovyan
+
+# ── Chown work directory ───────────────────────────────────────────────────────
+RUN chown -R jovyan:100 /home/jovyan
+
+USER jovyan
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+  CMD curl -f http://localhost:8888/api || exit 1
+
+EXPOSE 8888
+
+CMD ["jupyter", "lab", \
+     "--ip=0.0.0.0", \
+     "--port=8888", \
+     "--no-browser", \
+     "--allow-root", \
+     "--NotebookApp.allow_origin=*", \
+     "--NotebookApp.disable_check_xsrf=True"]

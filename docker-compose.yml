@@ -38,7 +38,6 @@ services:
         condition: service_healthy
     networks:
       - ml-network
-    command: npm run dev
 
   frontend:
     build:

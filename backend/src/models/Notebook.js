@@ -36,7 +36,9 @@ const notebookSchema = mongoose.Schema({
       triggeredBy: { type: String, default: '' }
     }
   ],
-  status: { type: String, required: true, default: 'Pending' }, // Pending, Running, Error, Terminating
+  autoShutdown: { type: Boolean, default: true },
+  lastActivity: { type: Date, default: Date.now },
+  status: { type: String, required: true, default: 'Pending' }, // Pending, Running, Stopped, Error, Terminating
   accessURL: { type: String },
   namespace: { type: String, default: 'default' },
 }, {

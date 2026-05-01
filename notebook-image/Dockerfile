@@ -1,46 +1,88 @@
-# Base Image with Scipy Stack (includes numpy, pandas, matplotlib, sklearn, seaborn)
-FROM jupyter/scipy-notebook:latest
+# =============================================================================
+# ML Notebook - Production Docker Image
+# Environments: base-python, ml-standard, ml-gpu
+# =============================================================================
 
-# Switch to root to install packages if needed (though conda/pip usually works as jovyan)
+# ── Stage 1: Dependency resolver (speeds up iterative rebuilds) ──────────────
+FROM python:3.11-slim AS base-deps
+
+# Install pip tools for faster resolution
+RUN pip install --no-cache-dir pip-tools==7.3.0
+
+# Pin all ML library versions for reproducibility
+COPY requirements.txt /tmp/requirements.txt
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r /tmp/requirements.txt
+
+# =============================================================================
+# ── Stage 2: Final lightweight runtime image ──────────────────────────────────
+# =============================================================================
+FROM jupyter/base-notebook:python-3.11
+
+LABEL maintainer="ML Platform <devops@mlplatform.io>"
+LABEL version="2.0"
+LABEL description="Production ML Notebook Environment"
+
+# Switch to root for system installs
 USER root
 
-# Install system dependencies if required for tensorflow/torch (e.g. CUDA libs if using GPU base)
-# For CPU-only standard usage, we might not need extra system pkgs immediately, 
-# but it's good practice to update.
+# Install only essential system packages (no dev headers in final image)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+        curl \
+        git \
+        && apt-get clean \
+        && rm -rf /var/lib/apt/lists/*
 
-# Switch back to jovyan to install python packages
+# Copy pre-built wheels from stage 1 for fast, offline install
+COPY --from=base-deps /wheels /wheels
+
+# Switch back to jovyan (non-root notebook user) for security
 USER ${NB_UID}
 
-# Install TensorFlow and PyTorch
-# Note: jupyter/scipy-notebook uses conda by default, but we can use pip.
-RUN pip install --no-cache-dir \
-    tensorflow \
-    torch \
-    torchvision \
-    torchaudio \
-    # Ensure requested packages are definitely present/updated
-    numpy \
-    pandas \
-    matplotlib \
-    scikit-learn \
-    seaborn
+# Install all ML packages from pre-built wheels (no network call = faster)
+RUN pip install --no-cache-dir --no-index --find-links=/wheels \
+        numpy \
+        pandas \
+        scikit-learn \
+        matplotlib \
+        seaborn \
+        scipy \
+        plotly \
+        requests \
+        joblib \
+        tqdm \
+    && pip install --no-cache-dir ipywidgets jupyterlab-widgets \
+    # Enable Jupyter widgets extension
+    && jupyter nbextension enable --py widgetsnbextension --sys-prefix \
+    && echo "All packages installed successfully" \
+    # Smoke test: verify critical imports work at build time
+    && python -c "import numpy, pandas, sklearn, matplotlib, seaborn; print('✅ All ML libraries verified')"
 
-# Set working directory to the mounted volume path
-# The default in jupyter docker stacks is /home/jovyan, and usually we mount to /home/jovyan/work
+# ── Auto-import startup script ────────────────────────────────────────────────
+# This file runs at every kernel start → np, pd, plt, sns always available
+COPY 00_imports.py /home/jovyan/.ipython/profile_default/startup/00_imports.py
+
+# ── Pre-built starter notebook in work directory ──────────────────────────────
+# Users see a ready-to-run notebook the moment they open JupyterLab
+COPY startup.ipynb /home/jovyan/work/00_Getting_Started.ipynb
+
+# Fix permissions so jovyan owns the startup files
+USER root
+RUN chown -R ${NB_UID}:${NB_GID} /home/jovyan/.ipython \
+    && chown ${NB_UID}:${NB_GID} /home/jovyan/work/00_Getting_Started.ipynb
+USER ${NB_UID}
+
+# Set working directory to PVC mount path
 WORKDIR /home/jovyan/work
 
-# Expose port 8888
+# Healthcheck: ping Jupyter API to confirm it's alive
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8888/api || exit 1
+
 EXPOSE 8888
 
-# The base image's entrypoint handles starting the notebook server.
-# We can customize the command to ensure it starts in the right directory 
-# and enforces token auth (which is default behavior, but we can be explicit).
-CMD ["start-notebook.sh", "--NotebookApp.token=''", "--NotebookApp.password=''", "--NotebookApp.allow_origin='*'"]
-# Note: In the backend controller we are passing JUPYTER_TOKEN env var.
-# The start-notebook.sh script respects that. 
-# If we want to enforce the token provided by env var, we just rely on the base image's script.
-# However, the user asked for "Token-based authentication". 
-# The base image does this by default if JUPYTER_TOKEN is set.
+# Allow JUPYTER_TOKEN to be injected at runtime via env var.
+# start-notebook.sh from the base image reads JUPYTER_TOKEN automatically.
+CMD ["start-notebook.sh", \
+     "--NotebookApp.allow_origin=*", \
+     "--NotebookApp.base_url=/", \
+     "--NotebookApp.disable_check_xsrf=True"]

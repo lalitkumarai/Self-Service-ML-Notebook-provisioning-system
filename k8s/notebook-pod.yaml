@@ -1,0 +1,153 @@
+# =============================================================================
+# ML Notebook Pod + PVC — Production Kubernetes Manifest
+# Supports two environments via the NOTEBOOK_ENV env var:
+#   - ml-standard  (default) → ml-notebook:latest
+#   - base-python             → python:3.11-slim
+# =============================================================================
+
+# ── 1. Persistent Volume Claim (per notebook, created dynamically by backend) ─
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: notebook-pvc-example        # Backend replaces this with unique pvcName
+  namespace: default
+  labels:
+    managed-by: ml-platform
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi                  # Backend sets this from user request
+
+---
+# ── 2. Deployment ──────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notebook-example            # Backend replaces with unique podName
+  namespace: default
+  labels:
+    app: notebook-example
+    managed-by: ml-platform
+    env: ml-standard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notebook-example
+  template:
+    metadata:
+      labels:
+        app: notebook-example
+        env: ml-standard
+    spec:
+      # ── Security: run as non-root notebook user ────────────────────────────
+      securityContext:
+        runAsUser: 1000             # jovyan user uid in jupyter/base-notebook
+        fsGroup: 100                # users group — ensures PVC is writable
+
+      # ── Init Container: verify ML libs before Jupyter starts ─────────────
+      initContainers:
+        - name: env-verify
+          image: ml-notebook:latest   # ← YOUR CUSTOM IMAGE TAG
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -c
+            - |
+              import numpy, pandas, sklearn, matplotlib, seaborn
+              print("✅ All ML libraries present. Starting Jupyter...")
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+
+      containers:
+        - name: jupyter
+          # ── CRITICAL: use your custom ML image, not the bare base ──────────
+          image: ml-notebook:latest   # ← Built from notebook-image/Dockerfile
+          imagePullPolicy: IfNotPresent  # Use IfNotPresent for Minikube local images
+
+          ports:
+            - name: jupyter
+              containerPort: 8888
+              protocol: TCP
+
+          env:
+            # Token injected at runtime — backend generates a random token per notebook
+            - name: JUPYTER_TOKEN
+              value: "notebook"       # Backend overrides this with a real secret
+
+            - name: JUPYTER_ENABLE_LAB
+              value: "yes"
+
+            # Disable token prompt for demo/dev — set to "yes" in production
+            - name: JUPYTER_ALLOW_INSECURE_WRITES
+              value: "true"
+
+            - name: NOTEBOOK_ENV
+              value: "ml-standard"
+
+          # ── Resource Requests & Limits ──────────────────────────────────────
+          resources:
+            requests:
+              cpu: "500m"           # 0.5 cores minimum guaranteed
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"          # Max 2 cores — prevents noisy-neighbor issues
+              memory: "4Gi"
+
+          # ── Volume: PVC mounted at jovyan's work directory ─────────────────
+          volumeMounts:
+            - name: notebook-storage
+              mountPath: /home/jovyan/work
+
+          # ── Probes: ensure pod is truly ready before traffic hits it ───────
+          readinessProbe:
+            httpGet:
+              path: /api/status
+              port: 8888
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 5
+
+          livenessProbe:
+            httpGet:
+              path: /api/status
+              port: 8888
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+
+      volumes:
+        - name: notebook-storage
+          persistentVolumeClaim:
+            claimName: notebook-pvc-example   # Backend sets this
+
+      # ── Tolerate GPU nodes if GPU requested ──────────────────────────────
+      # Uncomment when running on a GPU-enabled cluster:
+      # tolerations:
+      #   - key: "nvidia.com/gpu"
+      #     operator: "Exists"
+      #     effect: "NoSchedule"
+
+---
+# ── 3. NodePort Service (backend creates this dynamically per notebook) ───────
+apiVersion: v1
+kind: Service
+metadata:
+  name: notebook-example-svc
+  namespace: default
+  labels:
+    managed-by: ml-platform
+spec:
+  selector:
+    app: notebook-example
+  type: NodePort
+  ports:
+    - name: jupyter
+      protocol: TCP
+      port: 80
+      targetPort: 8888
+      nodePort: 30100     # Backend assigns a random port in range 30000-32767

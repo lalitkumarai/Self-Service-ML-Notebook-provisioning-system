@@ -30,6 +30,7 @@ import {
   ChevronRight,
   Terminal,
   ExternalLink,
+  Square,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import {
@@ -92,8 +93,16 @@ const StatusBadge = ({ status }) => {
   );
 };
 
-const NotebookCard = ({ notebook, onConnect, onDelete, index }) => {
+const NotebookCard = ({ notebook, onConnect, onStop, onDelete, index }) => {
   const isRunning = notebook.status === 'Running';
+  const isStopped = notebook.status === 'Stopped';
+  const [stopping, setStopping] = useState(false);
+
+  const handleStop = async () => {
+    setStopping(true);
+    await onStop(notebook._id);
+    setStopping(false);
+  };
 
   return (
     <motion.div
@@ -105,7 +114,7 @@ const NotebookCard = ({ notebook, onConnect, onDelete, index }) => {
     >
       <div className="group bg-white rounded-2xl border border-slate-200/70 shadow-sm hover:shadow-lg hover:border-indigo-200/60 transition-all duration-300 overflow-hidden flex flex-col h-full">
         {/* Card top accent */}
-        <div className={clsx('h-1 w-full', isRunning ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : 'bg-gradient-to-r from-slate-200 to-slate-300')} />
+        <div className={clsx('h-1 w-full', isRunning ? 'bg-gradient-to-r from-emerald-400 to-teal-500' : isStopped ? 'bg-gradient-to-r from-orange-300 to-amber-400' : 'bg-gradient-to-r from-slate-200 to-slate-300')} />
 
         <div className="p-5 flex-1 flex flex-col">
           {/* Header */}
@@ -175,25 +184,48 @@ const NotebookCard = ({ notebook, onConnect, onDelete, index }) => {
           </div>
         </div>
 
-        {/* Action footer */}
-        <div className="grid grid-cols-2 divide-x divide-slate-100 border-t border-slate-100">
+        {/* ── Action footer: Open | Stop | Delete ── */}
+        <div className="grid grid-cols-3 divide-x divide-slate-100 border-t border-slate-100">
+          {/* Open / Reconnect */}
           <button
             onClick={() => onConnect(notebook._id)}
             className={clsx(
-              'flex items-center justify-center gap-2 py-3 text-xs font-semibold transition-all',
+              'flex items-center justify-center gap-1.5 py-3 text-xs font-semibold transition-all',
               isRunning
                 ? 'text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700'
-                : 'text-slate-600 hover:bg-slate-50 hover:text-indigo-600'
+                : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-600'
             )}
           >
-            {isRunning ? <ExternalLink size={13} /> : <RotateCcw size={13} />}
-            {isRunning ? 'Open' : 'Reconnect'}
+            {isRunning ? <ExternalLink size={12} /> : <RotateCcw size={12} />}
+            {isRunning ? 'Open' : 'Start'}
           </button>
+
+          {/* Stop — only shown/active when Running */}
+          <motion.button
+            whileTap={{ scale: 0.95 }}
+            onClick={handleStop}
+            disabled={!isRunning || stopping}
+            className={clsx(
+              'flex items-center justify-center gap-1.5 py-3 text-xs font-semibold transition-all',
+              isRunning && !stopping
+                ? 'text-orange-500 hover:bg-orange-50 hover:text-orange-600'
+                : 'text-slate-300 cursor-not-allowed'
+            )}
+          >
+            {stopping ? (
+              <span className="w-3 h-3 border-2 border-orange-300 border-t-orange-500 rounded-full animate-spin" />
+            ) : (
+              <Square size={11} className={isRunning ? 'fill-orange-400' : 'fill-slate-200'} />
+            )}
+            {stopping ? '...' : 'Stop'}
+          </motion.button>
+
+          {/* Delete */}
           <button
             onClick={() => onDelete(notebook._id)}
-            className="flex items-center justify-center gap-2 py-3 text-xs font-semibold text-slate-500 hover:bg-red-50 hover:text-red-600 transition-all"
+            className="flex items-center justify-center gap-1.5 py-3 text-xs font-semibold text-slate-400 hover:bg-red-50 hover:text-red-600 transition-all"
           >
-            <Trash2 size={13} />
+            <Trash2 size={12} />
             Delete
           </button>
         </div>
@@ -308,6 +340,16 @@ const DashboardScreen = () => {
       showToast('Notebook deleted successfully');
     } catch {
       showToast('Failed to delete notebook', 'error');
+    }
+  };
+
+  const stopHandler = async (id) => {
+    try {
+      await axios.post(`/api/notebook/stop/${id}`);
+      fetchNotebooks(true);
+      showToast('Notebook stopped. Your data is preserved.', 'success');
+    } catch (err) {
+      showToast(err.response?.data?.message || 'Failed to stop notebook', 'error');
     }
   };
 
@@ -465,6 +507,7 @@ const DashboardScreen = () => {
             isLoading={isLoading}
             onOpen={(id) => connectHandler(id)}
             onReconnect={(id) => connectHandler(id)}
+            onStop={(id) => stopHandler(id)}
             onDelete={(id) => deleteHandler(id)}
             onCreateNew={() => setIsOpen(true)}
           />

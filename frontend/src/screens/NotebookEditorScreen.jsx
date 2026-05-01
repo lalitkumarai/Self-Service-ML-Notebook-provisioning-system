@@ -13,7 +13,9 @@ import {
   ChevronLeft,
   Settings,
   Terminal,
-  Sparkles
+  Sparkles,
+  AlertTriangle,
+  X
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
@@ -21,6 +23,7 @@ import CodeCell from '../components/notebook/CodeCell';
 import AIAssistantPanel from '../components/notebook/AIAssistantPanel';
 import ResourceMonitor from '../components/notebook/ResourceMonitor';
 import Toast from '../components/Toast';
+import TemplateModal from '../components/TemplateModal';
 
 const NotebookEditorScreen = () => {
   const { id } = useParams();
@@ -129,8 +132,13 @@ print("Plot generated successfully.")`,
   ]);
   const [activeCellId, setActiveCellId] = useState('cell-1');
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
-  const [executionProgress, setExecutionProgress] = useState(null); // { total, current, isRunning: boolean }
+  const [executionProgress, setExecutionProgress] = useState(null);
+  const [showIdleWarning, setShowIdleWarning] = useState(false);
+  const [autoShutdown, setAutoShutdown] = useState(true);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
   const pendingExecutions = useRef({});
+  const idleTimerRef = useRef(null);
+  const heartbeatRef = useRef(null);
 
   // Load notebook content
   useEffect(() => {
@@ -204,6 +212,40 @@ print("Plot generated successfully.")`,
     };
   }, [user]);
 
+  // ─── Idle Auto-Shutdown: heartbeat + warning ────────────────────────────────
+  useEffect(() => {
+    if (!socket || !autoShutdown) return;
+
+    // Send heartbeat every 5 minutes to prevent idle shutdown
+    const heartbeat = () => socket.emit('notebook:heartbeat', { notebookId: id });
+    heartbeatRef.current = setInterval(heartbeat, 5 * 60 * 1000);
+
+    // Show warning at 25 minutes of inactivity (5 min before backend kills it)
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimerRef.current);
+      setShowIdleWarning(false);
+      idleTimerRef.current = setTimeout(() => setShowIdleWarning(true), 25 * 60 * 1000);
+    };
+
+    // Listen for server-forced shutdown
+    socket.on(`notebook:idle_shutdown:${id}`, () => {
+      setToast({ show: true, message: 'Notebook stopped due to inactivity.', type: 'error' });
+      setTimeout(() => navigate('/dashboard'), 2000);
+    });
+
+    // Reset timer on user activity
+    window.addEventListener('keydown', resetIdleTimer);
+    window.addEventListener('mousedown', resetIdleTimer);
+    resetIdleTimer();
+
+    return () => {
+      clearInterval(heartbeatRef.current);
+      clearTimeout(idleTimerRef.current);
+      window.removeEventListener('keydown', resetIdleTimer);
+      window.removeEventListener('mousedown', resetIdleTimer);
+    };
+  }, [socket, autoShutdown, id]);
+
   // Handle incoming output and status from kernel
   useEffect(() => {
     if (!socket) return;
@@ -218,6 +260,7 @@ print("Plot generated successfully.")`,
             if (data.type === 'stderr') {
                 // Formatting for common errors could be done here if needed
                 // But the backend already formats the timeout/memory errors nicely
+
             }
 
             return {
@@ -346,10 +389,51 @@ print("Plot generated successfully.")`,
 
   const activeCellContent = cells.find(c => c.id === activeCellId)?.content || '';
 
+  const handleApplyTemplate = (template) => {
+    const newCells = template.cells.map(c => ({
+      id: c.id + '-' + Date.now(),
+      type: c.type,
+      content: c.source,
+      output: [],
+    }));
+    setCells(newCells);
+    if (newCells.length > 0) setActiveCellId(newCells[0].id);
+    setToast({ show: true, message: `Template "${template.name}" applied!`, type: 'success' });
+  };
+
   return (
     <div className="flex flex-col h-screen bg-gray-50">
+
+      {/* ── Idle Shutdown Warning Banner ─────────────────────────────── */}
+      <AnimatePresence>
+        {showIdleWarning && (
+          <motion.div
+            initial={{ opacity: 0, y: -40 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -40 }}
+            className="flex items-center justify-between gap-3 px-5 py-3 bg-amber-500 text-white text-sm font-semibold z-50 shadow-lg"
+          >
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={16} />
+              <span>Your notebook will stop in ~5 minutes due to inactivity. Move your mouse or press any key to stay active.</span>
+            </div>
+            <button onClick={() => setShowIdleWarning(false)} className="p-1 hover:bg-amber-600 rounded transition-colors">
+              <X size={14} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Template Modal ────────────────────────────────────────────── */}
+      <TemplateModal
+        isOpen={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        onSelect={handleApplyTemplate}
+      />
+
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shadow-sm z-10">
+
         <div className="flex items-center">
             <Button variant="ghost" size="sm" onClick={() => navigate('/dashboard')}>
                 <ChevronLeft className="h-5 w-5 mr-1" />
@@ -379,6 +463,15 @@ print("Plot generated successfully.")`,
                     </div>
                 </div>
             )}
+            <Button 
+                variant="outline"
+                size="sm" 
+                onClick={() => setShowTemplateModal(true)}
+                className="border-indigo-200 text-indigo-600 hover:bg-indigo-50"
+            >
+                <Sparkles className="h-4 w-4 mr-2 text-indigo-500" />
+                Use Template
+            </Button>
             <Button 
                 variant={isAIPanelOpen ? "default" : "outline"} 
                 size="sm" 

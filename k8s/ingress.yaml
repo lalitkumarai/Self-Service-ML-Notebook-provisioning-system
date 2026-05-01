@@ -1,0 +1,107 @@
+# =============================================================================
+# Kubernetes Ingress — Notebook Path-Based Routing
+# Each notebook gets a unique path: /user/{userId}/nb/{notebookId}
+# =============================================================================
+
+# ── 1. NGINX Ingress Controller (install once via Helm or Minikube addon)
+# minikube addons enable ingress
+# kubectl get pods -n ingress-nginx
+
+---
+# ── 2. Ingress Resource — routes all user notebook traffic ───────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ml-notebook-ingress
+  namespace: default
+  annotations:
+    # NGINX Ingress class
+    kubernetes.io/ingress.class: "nginx"
+
+    # ── Path rewrite: strip /user/{userId}/nb/{notebookId} prefix ───────────
+    # Jupyter must receive requests at / (its base URL)
+    nginx.ingress.kubernetes.io/rewrite-target: "/$3"
+
+    # ── Allow large payload for dataset uploads ──────────────────────────────
+    nginx.ingress.kubernetes.io/proxy-body-size: "512m"
+
+    # ── WebSocket support (required for Jupyter kernel communication) ────────
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+
+    # ── SSL redirect (disable for Minikube dev) ──────────────────────────────
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+
+spec:
+  rules:
+    - host: notebooks.local          # Add to /etc/hosts → <minikube-ip> notebooks.local
+      http:
+        paths:
+          # Route: /user/{userId}/nb/{notebookName}(/|$)(.*)
+          # Captures group $3 = remainder after prefix → sent to Jupyter
+          - path: /user/([^/]+)/nb/([^/]+)(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                # NOTE: Backend dynamically creates per-notebook services.
+                # This wildcard is handled by the NGINX snippet below.
+                # Each notebook Service is named: nb-{name}-{uid}-svc
+                name: ml-platform-router-svc  # placeholder — see NGINX snippet
+                port:
+                  number: 80
+
+---
+# ── 3. Per-Notebook Ingress Template (Backend creates one per notebook) ───────
+# This YAML shows the pattern. The backend generates this dynamically via the
+# K8s Networking API. Replace placeholders before applying manually.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nb-NOTEBOOK_NAME-ingress          # e.g. nb-mymodel-a1b2-ingress
+  namespace: default
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: "/$2"
+    nginx.ingress.kubernetes.io/proxy-body-size: "512m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  rules:
+    - host: notebooks.local
+      http:
+        paths:
+          - path: /user/USER_ID/nb/NOTEBOOK_NAME(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: nb-NOTEBOOK_NAME-svc    # per-notebook ClusterIP service
+                port:
+                  number: 80
+
+---
+# ── 4. ClusterIP Service (replaces NodePort — backend creates one per notebook)
+apiVersion: v1
+kind: Service
+metadata:
+  name: nb-NOTEBOOK_NAME-svc
+  namespace: default
+  labels:
+    managed-by: ml-platform
+    notebook: NOTEBOOK_NAME
+spec:
+  selector:
+    app: nb-NOTEBOOK_NAME
+  type: ClusterIP              # No NodePort needed — Ingress handles external access
+  ports:
+    - name: jupyter
+      protocol: TCP
+      port: 80
+      targetPort: 8888

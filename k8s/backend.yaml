@@ -16,16 +16,33 @@ spec:
       containers:
       - name: ml-backend
         image: ml-backend:latest
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always # Use Always for cloud deployments so it fetches new tags
         ports:
         - containerPort: 5000
-        env:
-        - name: MONGO_URI
-          value: "mongodb://mongo:27017/ml-notebooks"
-        - name: JWT_SECRET
-          value: "production_secret_key_change_me"
-        - name: NODE_ENV
-          value: "production"
+        envFrom:
+        - configMapRef:
+            name: ml-backend-config
+        - secretRef:
+            name: ml-backend-secret
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 10
 ---
 apiVersion: v1
 kind: Service
@@ -37,4 +54,4 @@ spec:
   ports:
   - port: 5000
     targetPort: 5000
-  type: NodePort # Or ClusterIP if using Ingress
+  type: ClusterIP # Use ClusterIP for backend, should not be exposed directly to internet

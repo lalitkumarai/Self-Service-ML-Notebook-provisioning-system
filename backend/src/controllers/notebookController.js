@@ -1,5 +1,5 @@
 const Notebook = require('../models/Notebook');
-const { k8sAppsApi, k8sApi } = require('../config/k8s');
+const { k8sAppsApi, k8sApi, k8sNetworkingApi } = require('../config/k8s');
 const fs = require('fs');
 const path = require('path');
 
@@ -16,8 +16,48 @@ const parseMemory = (memStr) => {
     return parseInt(memStr);
 };
 
+// ─── Image Registry ───────────────────────────────────────────────────────────
+const NOTEBOOK_IMAGES = {
+  // ── Base Python (no ML libs) ──────────────────────────────────────────────
+  'basic':                   process.env.IMG_BASIC          || 'jupyter/base-notebook:python-3.11',
+  'basic-py311':             process.env.IMG_BASIC_PY311    || 'jupyter/base-notebook:python-3.11',
+  'basic-py310':             process.env.IMG_BASIC_PY310    || 'jupyter/base-notebook:python-3.10',
+
+  // ── ML Standard (numpy, pandas, sklearn, matplotlib) ──────────────────────
+  'ml':                      process.env.IMG_ML             || 'ml-notebook:latest',
+  'ml-py311':                process.env.IMG_ML_PY311       || 'ml-notebook:py311',
+  'ml-py310':                process.env.IMG_ML_PY310       || 'ml-notebook:py310',
+  // Legacy aliases
+  'ml-standard':             process.env.IMG_ML             || 'ml-notebook:latest',
+  'ml-standard-py311':       process.env.IMG_ML_PY311       || 'ml-notebook:py311',
+  'ml-standard-py310':       process.env.IMG_ML_PY310       || 'ml-notebook:py310',
+
+  // ── GPU PyTorch (CUDA 12.1 + torch 2.3) ───────────────────────────────────
+  'gpu_pytorch':             process.env.IMG_PYTORCH        || 'ml-notebook-pytorch:latest',
+  'gpu_pytorch-py311':       process.env.IMG_PYTORCH_PY311  || 'ml-notebook-pytorch:py311',
+
+  // ── GPU TensorFlow (CUDA 12.3 + tf 2.16) ─────────────────────────────────
+  'gpu_tensorflow':          process.env.IMG_TENSORFLOW     || 'ml-notebook-tensorflow:latest',
+  'gpu_tensorflow-py311':    process.env.IMG_TF_PY311       || 'ml-notebook-tensorflow:py311',
+
+  // ── Legacy GPU key ────────────────────────────────────────────────────────
+  'gpu':                     process.env.IMG_PYTORCH        || 'ml-notebook-pytorch:latest',
+};
+
+// Resolve image with version suffix fallback
+const resolveImage = (environment = 'ml') => {
+  return NOTEBOOK_IMAGES[environment]
+    || NOTEBOOK_IMAGES[environment.split('-py')[0]]
+    || NOTEBOOK_IMAGES['ml'];
+};
+
+// Determine if environment needs GPU
+const needsGpu = (environment) =>
+  environment?.startsWith('gpu') || environment === 'gpu';
+
+
 // Helper to create K8s resources
-const provisionK8sResources = async (podName, pvcName, namespace, cpu, memory, storage, gpu, gitRepo) => {
+const provisionK8sResources = async (podName, pvcName, namespace, cpu, memory, storage, gpu, gitRepo, environment = 'ml', userId = 'anon') => {
     // 1. Create PVC
     const pvcManifest = {
         apiVersion: 'v1',
@@ -54,20 +94,42 @@ const provisionK8sResources = async (podName, pvcName, namespace, cpu, memory, s
         },
     };
 
-    if (gpu) {
+    // Auto-detect GPU requirement from environment name
+    const gpuRequired = gpu || needsGpu(environment);
+    if (gpuRequired) {
+        resources.requests['nvidia.com/gpu'] = '1';
         resources.limits['nvidia.com/gpu'] = '1';
     }
 
-    const initContainers = [];
+    // For GPU images, use a higher default memory
+    if (gpuRequired && !memory) {
+        resources.requests.memory = '4Gi';
+        resources.limits.memory  = '8Gi';
+    }
+
+    const initContainers = [
+        {
+            name: 'env-verify',
+            image: resolveImage(environment),
+            imagePullPolicy: 'IfNotPresent',
+            // For GPU envs, just check Python — GPU not available at init-container level
+            command: ['python', '-c',
+                needsGpu(environment)
+                  ? 'import torch, numpy, pandas; print("\u2705 GPU environment ready")'
+                  : 'import numpy, pandas, sklearn, matplotlib; print("\u2705 ML environment ready")'
+            ],
+            resources: { requests: { cpu: '50m', memory: '128Mi' }, limits: { cpu: '200m', memory: '256Mi' } },
+            volumeMounts: [{ mountPath: '/home/jovyan/work', name: 'notebook-storage' }],
+        },
+    ];
+
+    // Optional: git-clone init container
     if (gitRepo) {
         initContainers.push({
             name: 'git-clone',
-            image: 'alpine/git',
-            args: ['clone', gitRepo, '/work/repo'],
-            volumeMounts: [{
-                mountPath: '/work',
-                name: 'notebook-storage',
-            }],
+            image: 'alpine/git:latest',
+            args: ['clone', '--depth', '1', gitRepo, '/home/jovyan/work/repo'],
+            volumeMounts: [{ mountPath: '/home/jovyan/work', name: 'notebook-storage' }],
         });
     }
 
@@ -93,20 +155,40 @@ const provisionK8sResources = async (podName, pvcName, namespace, cpu, memory, s
                     containers: [
                         {
                             name: 'jupyter',
-                            image: 'ml-notebook:latest', // Custom image
-                            imagePullPolicy: 'IfNotPresent', // Important for local images
-                            ports: [{ containerPort: 8888 }],
+                            // ── Use the correct ML image based on environment + version ──
+                            image: resolveImage(environment),
+                            imagePullPolicy: 'IfNotPresent', // Critical for Minikube local images
+                            ports: [{ name: 'jupyter', containerPort: 8888 }],
                             env: [
-                                { name: 'JUPYTER_TOKEN', value: 'notebook' },
-                                { name: 'JUPYTER_ENABLE_LAB', value: 'yes' }
+                                // Token for Jupyter authentication
+                                { name: 'JUPYTER_TOKEN',               value: process.env.JUPYTER_TOKEN || 'notebook' },
+                                // Enable JupyterLab UI
+                                { name: 'JUPYTER_ENABLE_LAB',          value: 'yes' },
+                                // Allow wider CORS for frontend proxy
+                                { name: 'JUPYTER_ALLOW_INSECURE_WRITES', value: 'true' },
+                                // Pass environment label for introspection
+                                { name: 'NOTEBOOK_ENV',                value: environment },
+                                // Prevent Jupyter from creating hidden .local dir on read-only FSes
+                                { name: 'HOME',                        value: '/home/jovyan' },
                             ],
-                            resources: resources,
+                            resources,
                             volumeMounts: [
-                                {
-                                    mountPath: '/home/jovyan/work',
-                                    name: 'notebook-storage',
-                                },
+                                { mountPath: '/home/jovyan/work', name: 'notebook-storage' },
                             ],
+                            // Readiness: only route traffic once Jupyter API responds
+                            readinessProbe: {
+                                httpGet: { path: '/api/status', port: 8888 },
+                                initialDelaySeconds: 20,
+                                periodSeconds: 10,
+                                failureThreshold: 5,
+                            },
+                            // Liveness: restart if Jupyter process hangs
+                            livenessProbe: {
+                                httpGet: { path: '/api/status', port: 8888 },
+                                initialDelaySeconds: 60,
+                                periodSeconds: 30,
+                                failureThreshold: 3,
+                            },
                         },
                     ],
                     volumes: [
@@ -117,7 +199,20 @@ const provisionK8sResources = async (podName, pvcName, namespace, cpu, memory, s
                             },
                         },
                     ],
-                    nodeSelector: gpu ? { 'accelerator': 'gpu' } : undefined, // Assumes nodes are labeled 'accelerator=gpu'
+                    // Run as jovyan (uid 1000) — never run Jupyter as root
+                    securityContext: {
+                        runAsUser: 1000,
+                        fsGroup: 100,
+                    },
+                    initContainers,
+                    // GPU nodes must be labeled: accelerator=gpu
+                    nodeSelector: gpuRequired ? { 'accelerator': 'gpu' } : undefined,
+                    // Tolerate NVIDIA device-plugin taint if present
+                    tolerations: gpuRequired ? [{
+                        key: 'nvidia.com/gpu',
+                        operator: 'Exists',
+                        effect: 'NoSchedule',
+                    }] : undefined,
                 },
             },
         },
@@ -130,39 +225,87 @@ const provisionK8sResources = async (podName, pvcName, namespace, cpu, memory, s
         await k8sAppsApi.createNamespacedDeployment(namespace, deploymentManifest);
     }
 
-    // 3. Create Service
+
+    // 3. Create ClusterIP Service (Ingress routes to this — no NodePort needed)
+    const svcName = `${podName}-svc`;
+
     const serviceManifest = {
         apiVersion: 'v1',
         kind: 'Service',
         metadata: {
-            name: `${podName}-svc`,
-            namespace: namespace,
+            name: svcName,
+            namespace,
+            labels: { 'managed-by': 'ml-platform', notebook: podName },
         },
         spec: {
             selector: { app: podName },
-            ports: [
-                {
-                    protocol: 'TCP',
-                    port: 80,
-                    targetPort: 8888,
-                    nodePort: 30000 + Math.floor(Math.random() * 2000),
-                },
-            ],
-            type: 'NodePort',
+            type: 'ClusterIP',   // Ingress handles external access
+            ports: [{ name: 'jupyter', protocol: 'TCP', port: 80, targetPort: 8888 }],
         },
     };
 
-    let nodePort;
     try {
-        const existingSvc = await k8sApi.readNamespacedService(`${podName}-svc`, namespace);
-        nodePort = existingSvc.body.spec.ports[0].nodePort;
+        await k8sApi.readNamespacedService(svcName, namespace);
     } catch (e) {
-        const serviceResponse = await k8sApi.createNamespacedService(namespace, serviceManifest);
-        nodePort = serviceResponse.body.spec.ports[0].nodePort;
+        await k8sApi.createNamespacedService(namespace, serviceManifest);
     }
 
-    return nodePort;
+    // 4. Create per-notebook Ingress with path-based routing
+    //    URL pattern: http://notebooks.local/user/{userId}/nb/{podName}
+    const ingressName = `${podName}-ingress`;
+    const notebookPath = `/user/${userId}/nb/${podName}`;
+    const jupyterToken = process.env.JUPYTER_TOKEN || 'notebook';
+
+    const ingressManifest = {
+        apiVersion: 'networking.k8s.io/v1',
+        kind: 'Ingress',
+        metadata: {
+            name: ingressName,
+            namespace,
+            annotations: {
+                'kubernetes.io/ingress.class': 'nginx',
+                // Strip the path prefix so Jupyter receives requests at /
+                'nginx.ingress.kubernetes.io/rewrite-target': '/$2',
+                'nginx.ingress.kubernetes.io/proxy-body-size': '512m',
+                'nginx.ingress.kubernetes.io/proxy-read-timeout': '3600',
+                'nginx.ingress.kubernetes.io/proxy-send-timeout': '3600',
+                'nginx.ingress.kubernetes.io/ssl-redirect': 'false',
+                // WebSocket upgrade required for Jupyter kernel
+                'nginx.ingress.kubernetes.io/configuration-snippet': [
+                    'proxy_set_header Upgrade $http_upgrade;',
+                    'proxy_set_header Connection "upgrade";',
+                ].join('\n'),
+            },
+            labels: { 'managed-by': 'ml-platform', userId: String(userId) },
+        },
+        spec: {
+            rules: [{
+                host: process.env.INGRESS_HOST || 'notebooks.local',
+                http: {
+                    paths: [{
+                        // Capture: /user/{uid}/nb/{pod}  + remainder in $2
+                        path: `${notebookPath}(/|$)(.*)`,
+                        pathType: 'ImplementationSpecific',
+                        backend: {
+                            service: { name: svcName, port: { number: 80 } },
+                        },
+                    }],
+                },
+            }],
+        },
+    };
+
+    try {
+        await k8sNetworkingApi.readNamespacedIngress(ingressName, namespace);
+    } catch (e) {
+        await k8sNetworkingApi.createNamespacedIngress(namespace, ingressManifest);
+    }
+
+    // Return full publicly-accessible URL
+    const host = process.env.INGRESS_HOST || 'notebooks.local';
+    return `http://${host}${notebookPath}/?token=${jupyterToken}`;
 };
+
 
 // @desc    Create a new notebook
 // @route   POST /api/notebook/create
@@ -174,7 +317,7 @@ const createNotebook = async (req, res) => {
   // 3. Isolation: Resources are tagged with userId and ownership is enforced on access/delete.
   // 4. Brokerage: This function acts as the bridge. User request -> Backend -> K8s API.
 
-  const { name, cpu, ram, storage, gpu, gitRepo } = req.body;
+  const { name, cpu, ram, storage, gpu, gitRepo, environment = 'ml', pythonVersion = '3.11' } = req.body;
   const userId = req.user._id;
   
   // 1. Quota Check (Policy Enforcement)
@@ -184,19 +327,20 @@ const createNotebook = async (req, res) => {
   let currentMemory = 0;
   let currentGpu = 0;
 
-  userNotebooks.forEach(nb => {
-      currentCpu += parseCpu(nb.cpu);
+  // Only count RUNNING notebooks toward quota (stopped/failed ones free up resources)
+  const runningNotebooks = userNotebooks.filter(nb => nb.status === 'Running');
+  runningNotebooks.forEach(nb => {
+      currentCpu    += parseCpu(nb.cpu);
       currentMemory += parseMemory(nb.memory);
       if (nb.gpu) currentGpu += 1;
   });
 
-  const reqCpu = parseCpu(cpu);
+  const reqCpu    = parseCpu(cpu);
   const reqMemory = parseMemory(ram);
-  const reqGpu = gpu ? 1 : 0;
+  const reqGpu    = (gpu || needsGpu(environment)) ? 1 : 0;
 
-  // Use user's quota or default
-  // Updated default to 16GB to match frontend UI
-  const userQuota = req.user.quota || { cpu: 4.0, memory: 16384, gpu: 1 };
+  // Generous defaults for dev/testing — override via user.quota in DB for production
+  const userQuota = req.user.quota || { cpu: 16, memory: 65536, gpu: 4 };
 
   if (currentCpu + reqCpu > userQuota.cpu) {
       res.status(400).json({ message: `CPU Quota Exceeded. Limit: ${userQuota.cpu}, Used: ${currentCpu}, Requested: ${reqCpu}` });
@@ -219,22 +363,25 @@ const createNotebook = async (req, res) => {
   const memory = ram; // Map ram from frontend to memory in schema
 
   try {
-    const nodePort = await provisionK8sResources(podName, pvcName, namespace, cpu, memory, storage, gpu, gitRepo);
+    const accessURL = await provisionK8sResources(
+      podName, pvcName, namespace, cpu, memory, storage, gpu, gitRepo, environment, userId
+    );
 
     // Save to DB
     const notebook = await Notebook.create({
-      userId: userId,
-      name: name,
-      podName: podName,
-      pvcName: pvcName,
-      cpu: cpu,
-      memory: memory,
-      storage: storage,
-      gpu: gpu || false,
-      gitRepo: gitRepo || '',
-      status: 'Running',
-      accessURL: `http://localhost:${nodePort}/?token=notebook`,
-      namespace: namespace,
+      userId,
+      name,
+      podName,
+      pvcName,
+      cpu,
+      memory,
+      storage,
+      gpu: gpu || needsGpu(environment),
+      gitRepo:     gitRepo  || '',
+      framework:   environment,
+      status:      'Running',
+      accessURL,               // full Ingress URL returned by provisioner
+      namespace,
     });
 
     res.status(201).json(notebook);
@@ -270,10 +417,11 @@ const deleteNotebook = async (req, res) => {
     const namespace = notebook.namespace || 'default';
 
     try {
-        // Delete K8s resources
+        // Delete K8s resources (silent fail — resource may not exist yet)
         try { await k8sAppsApi.deleteNamespacedDeployment(podName, namespace); } catch(e) {}
         try { await k8sApi.deleteNamespacedService(`${podName}-svc`, namespace); } catch(e) {}
         try { await k8sApi.deleteNamespacedPersistentVolumeClaim(pvcName, namespace); } catch(e) {}
+        try { await k8sNetworkingApi.deleteNamespacedIngress(`${podName}-ingress`, namespace); } catch(e) {}
 
         // Delete persisted file
         const filePath = path.join(__dirname, '../../notebook_data', `${notebook._id}.json`);
@@ -316,26 +464,28 @@ const reconnectNotebook = async (req, res) => {
     const namespace = notebook.namespace || 'default';
 
     try {
-        // Ensure resources exist (Idempotent)
-        const nodePort = await provisionK8sResources(
-            podName, 
-            pvcName, 
-            namespace, 
-            notebook.cpu, 
-            notebook.memory, 
+        // Ensure resources exist (Idempotent) — returns the full Ingress access URL
+        const accessURL = await provisionK8sResources(
+            podName,
+            pvcName,
+            namespace,
+            notebook.cpu,
+            notebook.memory,
             notebook.storage,
             notebook.gpu,
-            notebook.gitRepo
+            notebook.gitRepo,
+            notebook.framework || 'ml',
+            notebook.userId
         );
 
-        // Update URL just in case NodePort changed (if service was recreated)
-        notebook.accessURL = `http://localhost:${nodePort}/?token=notebook`;
+        // Persist the fresh URL (Ingress host may have changed)
+        notebook.accessURL = accessURL;
         notebook.status = 'Running';
         await notebook.save();
 
-        res.json({ 
-            message: 'Notebook connected', 
-            accessURL: notebook.accessURL 
+        res.json({
+            message: 'Notebook connected',
+            accessURL: notebook.accessURL
         });
     } catch (error) {
         console.error(error);
@@ -343,7 +493,52 @@ const reconnectNotebook = async (req, res) => {
     }
 };
 
-// @desc    Save notebook content
+// @desc    Stop (pause) a notebook — scales deployment to 0, keeps PVC
+// @route   POST /api/notebook/stop/:id
+// @access  Private
+const stopNotebook = async (req, res) => {
+    const notebook = await Notebook.findById(req.params.id);
+
+    if (!notebook) {
+        return res.status(404).json({ message: 'Notebook not found' });
+    }
+
+    if (notebook.userId.toString() !== req.user._id.toString() && req.user.role !== 'admin') {
+        return res.status(403).json({ message: 'Not authorized' });
+    }
+
+    if (notebook.status === 'Stopped') {
+        return res.status(400).json({ message: 'Notebook is already stopped' });
+    }
+
+    const { podName, namespace = 'default' } = notebook;
+
+    try {
+        // Scale the Deployment to 0 replicas — kills the pod but preserves the PVC/data
+        try {
+            await k8sAppsApi.patchNamespacedDeployment(
+                podName,
+                namespace,
+                [{ op: 'replace', path: '/spec/replicas', value: 0 }],
+                undefined, undefined, undefined, undefined,
+                { headers: { 'Content-Type': 'application/json-patch+json' } }
+            );
+        } catch (k8sErr) {
+            // If the deployment doesn't exist (e.g. mock mode), log and continue
+            console.warn(`[Stop] K8s scale-down skipped: ${k8sErr.message || k8sErr}`);
+        }
+
+        notebook.status = 'Stopped';
+        await notebook.save();
+
+        res.json({ message: 'Notebook stopped. Your data is preserved.', status: 'Stopped' });
+    } catch (error) {
+        console.error('[Stop] Error:', error);
+        res.status(500).json({ message: 'Failed to stop notebook', error: error.message });
+    }
+};
+
+
 // @route   POST /api/notebook/:id/content
 // @access  Private
 const saveNotebookContent = async (req, res) => {
@@ -360,19 +555,25 @@ const saveNotebookContent = async (req, res) => {
     }
 
     try {
-        const filePath = path.join(__dirname, '../../notebook_data', `${id}.json`);
+        const dataDir  = path.join(__dirname, '../../notebook_data');
+        const filePath = path.join(dataDir, `${id}.json`);
+
+        // Ensure directory exists — safe even if it already does
+        fs.mkdirSync(dataDir, { recursive: true });
+
         const data = {
             id,
             cells,
             updatedAt: new Date().toISOString()
         };
-        
+
         fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
         res.json({ message: 'Notebook saved successfully' });
     } catch (error) {
         console.error('Save error:', error);
-        res.status(500).json({ message: 'Failed to save notebook content' });
+        res.status(500).json({ message: 'Failed to save notebook content', detail: error.message });
     }
+
 };
 
 // @desc    Get notebook content
@@ -536,6 +737,7 @@ module.exports = {
     getNotebooks, 
     deleteNotebook, 
     reconnectNotebook,
+    stopNotebook,
     saveNotebookContent,
     getNotebookContent,
     getSystemStatus

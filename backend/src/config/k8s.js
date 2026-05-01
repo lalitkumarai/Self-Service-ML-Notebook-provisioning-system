@@ -32,21 +32,30 @@ if (process.env.MOCK_K8S === 'true') {
   });
 
   k8sApi = {
-      readNamespacedPersistentVolumeClaim: async (name, ns) => { throw { response: { statusCode: 404 } }; }, // Always simulate not found first
+      readNamespacedPersistentVolumeClaim: async (name, ns) => { throw { response: { statusCode: 404 } }; },
       createNamespacedPersistentVolumeClaim: async (ns, body) => ({ body }),
       deleteNamespacedPersistentVolumeClaim: async (name, ns) => ({}),
       readNamespacedService: async (name, ns) => { throw { response: { statusCode: 404 } }; },
       createNamespacedService: async (ns, body) => mockResource(body.metadata.name, ns),
       deleteNamespacedService: async (name, ns) => ({}),
+      // For system-status admin endpoint
+      listNode: async () => ({ body: { items: [{ status: { nodeInfo: { kubeletVersion: 'v1.28.0-mock' } } }] } }),
   };
 
   k8sAppsApi = {
-      readNamespacedDeployment: async (name, ns) => { throw { response: { statusCode: 404 } }; },
+      readNamespacedDeployment:   async (name, ns) => { throw { response: { statusCode: 404 } }; },
       createNamespacedDeployment: async (ns, body) => ({ body }),
       deleteNamespacedDeployment: async (name, ns) => ({}),
+      // Required by stopNotebook — scale deployment to 0 replicas
+      patchNamespacedDeployment:  async (name, ns, patch, ...rest) => ({ body: { metadata: { name, namespace: ns } } }),
   };
 
-  k8sNetworkingApi = {};
+  k8sNetworkingApi = {
+      readNamespacedIngress:  async (name, ns) => { throw { response: { statusCode: 404 } }; },
+      createNamespacedIngress: async (ns, body) => ({ body }),
+      deleteNamespacedIngress: async (name, ns) => ({}),
+  };
+
 
 } else {
   // Load from default (works for both in-cluster ServiceAccount and local kubeconfig)

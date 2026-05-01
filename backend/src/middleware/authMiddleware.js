@@ -14,7 +14,7 @@ const authenticateToken = async (req, res, next) => {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
       // decoded.userId matches the payload in authController.js
-      req.user = await User.findById(decoded.userId).select('-password -refreshToken');
+      req.user = await User.findById(decoded.userId).select('-passwordHash -refreshToken');
 
       if (!req.user) {
         console.log('Auth Failed: User not found for ID:', decoded.userId);

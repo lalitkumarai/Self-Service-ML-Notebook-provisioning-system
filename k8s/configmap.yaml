@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ml-backend-config
+data:
+  NODE_ENV: "production"
+  MONGO_URI: "mongodb://mongo:27017/ml-notebooks"
+  # You can add rate limiting, quota defaults, or CORS allowed origins here in the future.

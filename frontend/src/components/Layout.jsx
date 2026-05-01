@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useState, useEffect } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Dialog, Transition } from '@headlessui/react';
 import {
@@ -17,8 +17,12 @@ import {
   User,
   Zap,
   ChevronRight,
-  Sparkles,
   Command,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Database,
+  FlaskConical,
+  PlayCircle
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from './AuthProvider';
@@ -30,183 +34,290 @@ const navigation = [
     name: 'Dashboard',
     href: '/dashboard',
     icon: LayoutDashboard,
-    description: 'Overview & metrics',
   },
   {
     name: 'Create Notebook',
     href: '/dashboard?create=true',
     icon: Plus,
-    description: 'New environment',
     highlight: true,
   },
   {
     name: 'My Notebooks',
     href: '/dashboard',
     icon: FolderOpen,
-    description: 'Manage notebooks',
+  },
+  {
+    name: 'Datasets',
+    href: '/datasets',
+    icon: Database,
+  },
+  {
+    name: 'Experiments',
+    href: '/experiments',
+    icon: FlaskConical,
+  },
+  {
+    name: 'Demo Mode',
+    href: '/demo',
+    icon: PlayCircle,
   },
   {
     name: 'Admin Console',
     href: '/admin',
     icon: Shield,
-    description: 'User & system mgmt',
     adminOnly: true,
   },
 ];
 
-// ─── Sidebar nav item ─────────────────────────────────────────────────────────
-const NavItem = ({ item, isActive, onClick }) => (
-  <Link
-    to={item.href}
-    onClick={onClick}
-    className={clsx(
-      'group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 relative',
-      isActive
-        ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30'
-        : item.highlight
-        ? 'text-indigo-300 hover:bg-indigo-600/15 hover:text-indigo-200 border border-dashed border-indigo-700/50 hover:border-indigo-600/60'
-        : 'text-slate-400 hover:bg-white/6 hover:text-slate-100'
-    )}
-  >
-    {/* Active indicator bar */}
-    {isActive && (
+// ─── Animations ───────────────────────────────────────────────────────────────
+const sidebarVariants = {
+  expanded: { width: 260, transition: { type: "spring", stiffness: 300, damping: 30 } },
+  collapsed: { width: 80, transition: { type: "spring", stiffness: 300, damping: 30 } }
+};
+
+const navItemVariants = {
+  hidden: { opacity: 0, x: -20 },
+  visible: { opacity: 1, x: 0, transition: { type: "spring", stiffness: 300, damping: 24 } }
+};
+
+const staggerContainer = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: { staggerChildren: 0.06, delayChildren: 0.1 }
+  }
+};
+
+// ─── Tooltip Component ────────────────────────────────────────────────────────
+const Tooltip = ({ text, show }) => (
+  <AnimatePresence>
+    {show && (
       <motion.div
-        layoutId="nav-active"
-        className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-white rounded-full"
-        transition={{ type: 'spring', stiffness: 500, damping: 35 }}
-      />
+        initial={{ opacity: 0, x: -10, scale: 0.95 }}
+        animate={{ opacity: 1, x: 0, scale: 1 }}
+        exit={{ opacity: 0, x: -10, scale: 0.95 }}
+        transition={{ duration: 0.15 }}
+        className="absolute left-full ml-4 px-3 py-1.5 bg-slate-800 text-white text-[11px] font-bold tracking-wide uppercase rounded-lg shadow-xl border border-slate-700/50 z-50 whitespace-nowrap pointer-events-none"
+      >
+        {text}
+        <div className="absolute top-1/2 -left-1 -translate-y-1/2 w-2 h-2 bg-slate-800 rotate-45 border-l border-b border-slate-700/50" />
+      </motion.div>
     )}
+  </AnimatePresence>
+);
 
-    <item.icon
-      size={17}
-      className={clsx(
-        'flex-shrink-0 transition-colors duration-200',
-        isActive
-          ? 'text-white'
-          : item.highlight
-          ? 'text-indigo-400'
-          : 'text-slate-500 group-hover:text-slate-300'
-      )}
-    />
+// ─── Sidebar Nav Item ─────────────────────────────────────────────────────────
+const NavItem = ({ item, isActive, isCollapsed, onClick }) => {
+  const [isHovered, setIsHovered] = useState(false);
 
-    <div className="min-w-0 flex-1">
-      <p className="truncate leading-tight font-medium">{item.name}</p>
-      {!isActive && (
-        <p
+  return (
+    <motion.div variants={navItemVariants} className="relative z-10 w-full">
+      <motion.div
+        whileHover={{ scale: 1.02 }}
+        whileTap={{ scale: 0.97 }}
+        onHoverStart={() => setIsHovered(true)}
+        onHoverEnd={() => setIsHovered(false)}
+      >
+        <Link
+          to={item.href}
+          onClick={onClick}
           className={clsx(
-            'text-[10px] truncate mt-0.5 transition-colors',
-            item.highlight
-              ? 'text-indigo-600 group-hover:text-indigo-400'
-              : 'text-slate-600 group-hover:text-slate-500'
+            'group flex items-center py-2.5 rounded-2xl text-sm font-medium transition-all duration-300 relative overflow-hidden',
+            isActive
+              ? 'bg-gradient-to-r from-indigo-500/15 to-purple-500/5 text-indigo-300 shadow-[0_4px_20px_rgba(99,102,241,0.05)] border border-indigo-500/20'
+              : item.highlight
+              ? 'bg-white/[0.02] text-indigo-300 hover:bg-white/[0.05] border border-white/[0.05] hover:border-indigo-500/30'
+              : 'text-slate-400 hover:bg-white/[0.04] hover:text-slate-200 border border-transparent',
+            isCollapsed ? 'justify-center mx-auto w-[52px] h-[52px] px-0' : 'gap-3 px-3 w-full'
           )}
         >
-          {item.description}
-        </p>
-      )}
-    </div>
+          {/* Active indicator bar */}
+          {isActive && (
+            <motion.div
+              layoutId="nav-active"
+              className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-3/5 bg-indigo-400 shadow-[0_0_12px_rgba(99,102,241,0.9)] rounded-r-full"
+              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+            />
+          )}
 
-    {item.highlight && !isActive && (
-      <span className="ml-auto flex-shrink-0 text-[9px] bg-indigo-500/20 text-indigo-400 px-1.5 py-0.5 rounded-md font-bold border border-indigo-500/30 uppercase tracking-wider">
-        New
-      </span>
-    )}
+          {/* Subtle hover gradient for highlight items */}
+          {item.highlight && !isActive && (
+            <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/0 via-indigo-500/10 to-indigo-500/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000" />
+          )}
 
-    {isActive && (
-      <ChevronRight size={13} className="ml-auto text-white/60 flex-shrink-0" />
-    )}
-  </Link>
-);
+          {/* Icon with rotation on hover */}
+          <motion.div animate={{ rotate: isHovered ? 6 : 0 }} className="relative z-10 flex items-center justify-center">
+            <item.icon
+              size={isCollapsed ? 22 : 18}
+              strokeWidth={isActive ? 2.5 : 2}
+              className={clsx(
+                'flex-shrink-0 transition-colors duration-300',
+                isActive ? 'text-indigo-400 drop-shadow-[0_0_8px_rgba(99,102,241,0.4)]' : item.highlight ? 'text-indigo-400/80 group-hover:text-indigo-300' : 'text-slate-500 group-hover:text-slate-300'
+              )}
+            />
+          </motion.div>
 
-// ─── Sidebar content component ────────────────────────────────────────────────
-const SidebarContent = ({ location, onNavigate, user, onLogout }) => (
-  <div className="flex flex-col h-full">
-    {/* ── Logo ── */}
-    <div className="flex items-center gap-3 px-5 py-5">
-      <div className="relative flex items-center justify-center w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-violet-600 shadow-lg shadow-indigo-900/50 flex-shrink-0">
-        <Zap className="w-4.5 h-4.5 text-white" size={18} />
-        {/* Subtle shine */}
-        <div className="absolute inset-0 rounded-xl bg-gradient-to-br from-white/20 to-transparent pointer-events-none" />
-      </div>
-      <div className="min-w-0">
-        <p className="text-[15px] font-bold text-white tracking-tight leading-none">ML Notebooks</p>
-        <p className="text-[10px] text-indigo-400/80 font-semibold uppercase tracking-[0.15em] mt-0.5">
-          Platform
-        </p>
-      </div>
-    </div>
-
-    {/* Divider */}
-    <div className="mx-4 h-px bg-gradient-to-r from-transparent via-slate-700/60 to-transparent mb-4" />
-
-    {/* ── Navigation label ── */}
-    <div className="px-5 mb-2">
-      <p className="text-[10px] font-bold text-slate-600 uppercase tracking-[0.18em]">Navigation</p>
-    </div>
-
-    {/* ── Nav items ── */}
-    <nav className="flex-1 px-3 space-y-0.5 overflow-y-auto pb-4 scrollbar-thin">
-      {navigation.map((item) => {
-        const isActive = location.pathname === item.href.split('?')[0];
-        return (
-          <NavItem
-            key={item.name}
-            item={item}
-            isActive={isActive}
-            onClick={onNavigate}
-          />
-        );
-      })}
-
-      {/* Workspace section */}
-      <div className="pt-4 pb-2">
-        <p className="px-3 text-[10px] font-bold text-slate-600 uppercase tracking-[0.18em]">
-          Workspace
-        </p>
-      </div>
-      <button className="w-full group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:bg-white/6 hover:text-slate-200 transition-all duration-200">
-        <HelpCircle size={17} className="text-slate-600 group-hover:text-slate-300 flex-shrink-0" />
-        <span>Help & Support</span>
-      </button>
-      <button className="w-full group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:bg-white/6 hover:text-slate-200 transition-all duration-200">
-        <Settings size={17} className="text-slate-600 group-hover:text-slate-300 flex-shrink-0" />
-        <span>Settings</span>
-      </button>
-    </nav>
-
-    {/* ── User profile card ── */}
-    <div className="p-3 border-t border-slate-800/50">
-      <div className="p-3 rounded-xl bg-white/[0.04] border border-white/[0.07] hover:bg-white/[0.07] transition-colors duration-200 group">
-        <div className="flex items-center gap-3">
-          {/* Avatar */}
-          <div className="relative flex-shrink-0">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-white text-sm font-bold shadow-md">
-              {user?.username?.charAt(0)?.toUpperCase() ||
-                user?.email?.charAt(0)?.toUpperCase() ||
-                'U'}
+          {/* Text (hidden if collapsed) */}
+          {!isCollapsed && (
+            <div className="min-w-0 flex-1 z-10">
+              <p className={clsx("truncate tracking-wide", isActive ? "font-bold text-indigo-100" : "font-medium")}>
+                {item.name}
+              </p>
             </div>
-            {/* Online dot */}
-            <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-slate-900" />
-          </div>
+          )}
 
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-slate-200 truncate leading-tight">
-              {user?.username || 'User'}
-            </p>
-            <p className="text-[10px] text-slate-500 truncate">{user?.email}</p>
-          </div>
+          {/* 'New' Badge */}
+          {!isCollapsed && item.highlight && !isActive && (
+            <span className="ml-auto flex-shrink-0 text-[9px] bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider z-10 border border-indigo-500/30">
+              New
+            </span>
+          )}
+        </Link>
+      </motion.div>
 
-          <button
-            onClick={onLogout}
-            title="Sign out"
-            className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-all duration-200 flex-shrink-0 opacity-0 group-hover:opacity-100"
-          >
-            <LogOut size={14} />
-          </button>
-        </div>
+      {/* Tooltip for collapsed state */}
+      <Tooltip text={item.name} show={isCollapsed && isHovered} />
+    </motion.div>
+  );
+};
+
+// ─── Desktop & Mobile Sidebar Content ───────────────────────────────────────────
+const SidebarContent = ({ location, onNavigate, user, onLogout, isCollapsed, toggleCollapse, isMobile }) => {
+  return (
+    <motion.div
+      initial="hidden"
+      animate="visible"
+      className={clsx(
+        "flex flex-col h-full relative overflow-hidden",
+        "bg-[#09090b] text-slate-300" // Premium extremely dark background
+      )}
+    >
+      {/* Premium Glass Background effects */}
+      <div className="absolute top-[-10%] left-[-10%] w-[120%] h-64 bg-indigo-600/10 blur-[80px] pointer-events-none rounded-full" />
+      <div className="absolute bottom-[-10%] right-[-10%] w-64 h-64 bg-purple-600/10 blur-[80px] pointer-events-none rounded-full" />
+
+      {/* ── Logo Area ── */}
+      <div className={clsx("flex items-center py-6 relative z-20", isCollapsed ? "justify-center px-0" : "px-5 gap-3")}>
+        <motion.div whileHover={{ scale: 1.05, rotate: 5 }} className="relative flex items-center justify-center w-10 h-10 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/30 flex-shrink-0 border border-white/10 backdrop-blur-md cursor-pointer">
+          <Zap className="w-5 h-5 text-white" fill="currentColor" size={20} />
+          <div className="absolute inset-0 rounded-2xl bg-gradient-to-tr from-white/30 to-transparent opacity-40 pointer-events-none" />
+        </motion.div>
+        
+        {!isCollapsed && (
+          <motion.div initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} className="min-w-0 flex-1">
+            <p className="text-[17px] font-extrabold text-white tracking-tight leading-none bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">ML Notebooks</p>
+            <p className="text-[10px] text-indigo-400 font-bold uppercase tracking-[0.25em] mt-1 drop-shadow-[0_0_8px_rgba(99,102,241,0.5)]">Platform</p>
+          </motion.div>
+        )}
       </div>
-    </div>
-  </div>
-);
+
+      {/* ── Toggle Collapse Button (Desktop Only) ── */}
+      {!isMobile && (
+        <button 
+          onClick={toggleCollapse}
+          className={clsx(
+            "absolute top-8 z-30 p-1.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700/50 shadow-sm backdrop-blur-md transition-all",
+            isCollapsed ? "right-[-12px] opacity-0 hover:opacity-100" : "right-4 opacity-0 hover:opacity-100 group-hover/sidebar:opacity-100"
+          )}
+        >
+          {isCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+        </button>
+      )}
+
+      {/* Divider */}
+      <div className="mx-5 h-px bg-gradient-to-r from-white/10 via-white/5 to-transparent mb-6 relative z-10" />
+
+      {/* ── Navigation Items ── */}
+      <motion.div variants={staggerContainer} className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin px-3 space-y-1 relative z-10">
+        {!isCollapsed && <motion.p variants={navItemVariants} className="px-2 mb-3 text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Navigation</motion.p>}
+        
+        {navigation.map((item) => {
+          const isCreate = location.search.includes('create=true');
+          const isItemCreate = item.href.includes('create=true');
+          const isActive = isItemCreate ? isCreate : (location.pathname === item.href.split('?')[0] && !isCreate);
+          
+          if (item.adminOnly && user?.role !== 'admin') return null;
+
+          return (
+            <NavItem
+              key={item.name}
+              item={item}
+              isActive={isActive}
+              isCollapsed={isCollapsed}
+              onClick={onNavigate}
+            />
+          );
+        })}
+
+        {/* Workspace section */}
+        <div className="pt-6 pb-2">
+          {!isCollapsed && <motion.p variants={navItemVariants} className="px-2 mb-2 text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Workspace</motion.p>}
+          <div className="space-y-1">
+            <NavItem 
+              item={{ name: 'Help & Support', href: '#', icon: HelpCircle }} 
+              isActive={false} 
+              isCollapsed={isCollapsed} 
+              onClick={(e) => e.preventDefault()} 
+            />
+            <NavItem 
+              item={{ name: 'Settings', href: '/settings', icon: Settings }} 
+              isActive={location.pathname === '/settings'}
+              isCollapsed={isCollapsed} 
+              onClick={onNavigate} 
+            />
+          </div>
+        </div>
+      </motion.div>
+
+      {/* ── User Profile Card ── */}
+      <div className={clsx("p-4 relative z-10 transition-all", isCollapsed && "px-2 pb-6")}>
+        <motion.div 
+          whileHover={{ scale: isCollapsed ? 1.05 : 1.02 }}
+          className={clsx(
+            "rounded-2xl bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.08] hover:border-white/[0.12] hover:shadow-[0_8px_30px_rgba(99,102,241,0.15)] transition-all duration-300 group/profile cursor-pointer backdrop-blur-xl relative overflow-hidden",
+            isCollapsed ? "p-2 mx-auto w-12 h-12 flex items-center justify-center" : "p-3"
+          )}
+        >
+          {/* Shine effect */}
+          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent translate-x-[-100%] group-hover/profile:translate-x-[100%] transition-transform duration-1000" />
+          
+          <div className="flex items-center gap-3 relative z-10">
+            {/* Avatar */}
+            <div className="relative flex-shrink-0">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white text-sm font-bold shadow-inner border border-white/10 ring-2 ring-[#09090b]">
+                {user?.username?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase() || 'U'}
+              </div>
+              <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 bg-emerald-500 rounded-full border-[2.5px] border-[#09090b] shadow-[0_0_10px_rgba(16,185,129,0.8)]" />
+            </div>
+
+            {!isCollapsed && (
+              <>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-slate-200 truncate leading-tight group-hover/profile:text-white transition-colors">
+                    {user?.username || 'User'}
+                  </p>
+                  <p className="text-[11px] font-medium text-slate-500 truncate mt-0.5 group-hover/profile:text-slate-400 transition-colors">
+                    {user?.email}
+                  </p>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onLogout();
+                  }}
+                  title="Sign out"
+                  className="p-2 rounded-xl text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-all duration-200 flex-shrink-0 opacity-0 group-hover/profile:opacity-100"
+                >
+                  <LogOut size={16} />
+                </button>
+              </>
+            )}
+          </div>
+        </motion.div>
+      </div>
+    </motion.div>
+  );
+};
 
 // ─── Main Layout ──────────────────────────────────────────────────────────────
 const Layout = () => {
@@ -214,20 +325,23 @@ const Layout = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(() => {
+    return localStorage.getItem('sidebarCollapsed') === 'true';
+  });
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+
+  const toggleCollapse = () => {
+    setIsCollapsed(prev => {
+      const newVal = !prev;
+      localStorage.setItem('sidebarCollapsed', String(newVal));
+      return newVal;
+    });
+  };
 
   const handleLogout = async () => {
     await logout();
     navigate('/login');
-  };
-
-  const getPageTitle = () => {
-    const path = location.pathname;
-    if (path === '/dashboard') return 'Dashboard';
-    if (path === '/admin') return 'Admin Console';
-    if (path.startsWith('/notebook/')) return 'Notebook Editor';
-    return 'ML Platform';
   };
 
   const getBreadcrumb = () => {
@@ -254,7 +368,7 @@ const Layout = () => {
             leaveFrom="opacity-100"
             leaveTo="opacity-0"
           >
-            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-md" />
           </Transition.Child>
 
           <div className="fixed inset-0 flex z-40">
@@ -267,8 +381,8 @@ const Layout = () => {
               leaveFrom="translate-x-0"
               leaveTo="-translate-x-full"
             >
-              <Dialog.Panel className="relative flex flex-col w-72 bg-[#0f1629] shadow-2xl">
-                <div className="absolute top-3 right-3 z-10">
+              <Dialog.Panel className="relative flex flex-col w-72 bg-[#09090b] shadow-2xl">
+                <div className="absolute top-3 right-3 z-50">
                   <button
                     className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-all"
                     onClick={() => setSidebarOpen(false)}
@@ -281,6 +395,9 @@ const Layout = () => {
                   onNavigate={() => setSidebarOpen(false)}
                   user={user}
                   onLogout={handleLogout}
+                  isCollapsed={false}
+                  toggleCollapse={() => {}}
+                  isMobile={true}
                 />
               </Dialog.Panel>
             </Transition.Child>
@@ -289,24 +406,27 @@ const Layout = () => {
       </Transition.Root>
 
       {/* ── Desktop Sidebar ──────────────────────────────────────────── */}
-      <div className="hidden lg:flex lg:flex-shrink-0">
-        <div
-          className="w-[220px] xl:w-60 flex flex-col border-r border-slate-800/40"
-          style={{
-            background: 'linear-gradient(180deg, #0d1526 0%, #111827 60%, #0f1629 100%)',
-          }}
-        >
+      <motion.div 
+        className="hidden lg:flex lg:flex-shrink-0 group/sidebar border-r border-slate-800/60 z-20 shadow-2xl"
+        variants={sidebarVariants}
+        initial={isCollapsed ? "collapsed" : "expanded"}
+        animate={isCollapsed ? "collapsed" : "expanded"}
+      >
+        <div className="w-full flex flex-col h-full bg-[#09090b]">
           <SidebarContent
             location={location}
             onNavigate={() => {}}
             user={user}
             onLogout={handleLogout}
+            isCollapsed={isCollapsed}
+            toggleCollapse={toggleCollapse}
+            isMobile={false}
           />
         </div>
-      </div>
+      </motion.div>
 
       {/* ── Main content area ────────────────────────────────────────── */}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden bg-slate-50 relative z-10 shadow-[-10px_0_30px_rgba(0,0,0,0.05)]">
 
         {/* ── Top Navbar ───────────────────────────────────────────── */}
         <header className="flex-shrink-0 bg-white/95 backdrop-blur-sm border-b border-slate-200/70 z-10">
@@ -425,10 +545,10 @@ const Layout = () => {
                   className="flex items-center gap-2 pl-2 pr-3 py-1.5 rounded-xl hover:bg-slate-100 transition-all border border-transparent hover:border-slate-200 group"
                 >
                   <div className="relative w-7 h-7 flex-shrink-0">
-                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white text-xs font-bold">
+                    <div className="w-7 h-7 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center text-white text-xs font-bold ring-2 ring-white">
                       {user?.username?.charAt(0)?.toUpperCase() || 'U'}
                     </div>
-                    <span className="absolute -bottom-0.5 -right-0.5 w-2 h-2 bg-emerald-500 rounded-full border border-white" />
+                    <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-emerald-500 rounded-full border-2 border-white" />
                   </div>
                   <span className="hidden sm:block text-sm font-medium text-slate-700 max-w-[100px] truncate">
                     {user?.username || user?.email}
@@ -466,7 +586,7 @@ const Layout = () => {
                         {user?.role === 'admin' && (
                           <div className="mt-2">
                             <span className="inline-flex items-center gap-1 text-[10px] bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wide border border-indigo-200">
-                              <Sparkles size={9} />
+                              <Shield size={9} />
                               Admin
                             </span>
                           </div>

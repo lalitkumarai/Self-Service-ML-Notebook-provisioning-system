@@ -1,0 +1,62 @@
+# =============================================================================
+# GPU Notebook — TensorFlow + CUDA 12.3
+# Image tag: ml-notebook-tensorflow:latest
+# =============================================================================
+FROM tensorflow/tensorflow:2.16.1-gpu
+
+LABEL maintainer="ML Platform <devops@mlplatform.io>"
+LABEL description="TensorFlow GPU Notebook - CUDA 12.3"
+LABEL framework="tensorflow"
+
+# ── System packages ───────────────────────────────────────────────────────────
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl git ca-certificates \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# ── Create non-root notebook user ─────────────────────────────────────────────
+RUN useradd -m -s /bin/bash -u 1000 -g 100 jovyan 2>/dev/null || true
+ENV HOME=/home/jovyan
+WORKDIR /home/jovyan/work
+
+# ── Python packages ────────────────────────────────────────────────────────────
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+        numpy==1.26.4 \
+        pandas==2.2.1 \
+        scikit-learn==1.4.2 \
+        matplotlib==3.8.4 \
+        seaborn==0.13.2 \
+        scipy==1.13.0 \
+        keras==3.3.3 \
+        jupyterlab==4.2.1 \
+        ipywidgets==8.1.2 \
+        ipykernel==6.29.4 && \
+    # Smoke test
+    python -c "import tensorflow as tf; print(f'✅ TensorFlow {tf.__version__} ready | GPUs: {tf.config.list_physical_devices(\"GPU\")}')"
+
+# ── Auto-import startup + starter notebook ────────────────────────────────────
+COPY 00_imports.py /home/jovyan/.ipython/profile_default/startup/00_imports.py
+COPY startup.ipynb /home/jovyan/work/00_Getting_Started.ipynb
+USER root
+RUN mkdir -p /home/jovyan/.ipython/profile_default/startup \
+    && chown -R jovyan:100 /home/jovyan/.ipython 2>/dev/null || true \
+    && chown jovyan:100 /home/jovyan/work/00_Getting_Started.ipynb 2>/dev/null || true
+USER jovyan
+
+RUN chown -R jovyan:100 /home/jovyan 2>/dev/null || true
+
+USER jovyan
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=3 \
+  CMD curl -f http://localhost:8888/api || exit 1
+
+EXPOSE 8888
+
+CMD ["jupyter", "lab", \
+     "--ip=0.0.0.0", \
+     "--port=8888", \
+     "--no-browser", \
+     "--allow-root", \
+     "--NotebookApp.allow_origin=*", \
+     "--NotebookApp.disable_check_xsrf=True"]
